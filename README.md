@@ -66,12 +66,13 @@ python -m streamlit run streamlit_app.py
 3. Select your repository and branch.
 4. Set Main file path to `streamlit_app.py`.
 5. Use dependencies from `requirements.txt`.
-6. Set Python version to 3.11.
+6. Keep `runtime.txt` in the repo to force Python 3.11.
 7. Deploy.
 
 Important:
 - Commit [data/reference_voices](data/reference_voices) files so they are available in cloud runtime.
 - Keep upload length under 15 seconds.
+- If logs show Python 3.14, verify `runtime.txt` and `.python-version` are present at repo root, then reboot the app.
 
 ## 7) How to Use
 
@@ -86,6 +87,16 @@ Important:
 - CPU-only inference path is enforced.
 - Models are loaded lazily and cached.
 - First conversion is slower due to initial model loading.
+- For Streamlit Cloud stability, defaults are tuned for lower memory:
+  - `WHISPER_MODEL_SIZE=tiny`
+  - `CACHE_XTTS_MODEL=0` (XTTS is unloaded after each conversion)
+- If you want faster repeat conversions and have enough memory, set `CACHE_XTTS_MODEL=1`.
+- Streamlit Cloud safety default: app uses a lightweight fallback TTS model.
+  This prevents frequent memory-related crashes caused by full XTTS on free-tier containers.
+- To enable full XTTS on Cloud, set `ENABLE_XTTS_IN_CLOUD=1` (may still OOM on small instances).
+- Optional fallback controls:
+  - `LIGHT_TTS_MODEL_NAME` (default: `tts_models/en/ljspeech/tacotron2-DDC`)
+  - `CACHE_LIGHT_TTS_MODEL` (default: `1`)
 
 ## 9) Troubleshooting
 
@@ -104,3 +115,8 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 ```
+
+- Streamlit Cloud dependency install fails with Python 3.14:
+  - Ensure the deployed branch contains both `runtime.txt` and `.python-version` with `3.11`.
+  - In Streamlit Cloud: Manage app -> Settings -> Advanced -> Python version -> 3.11.
+  - Clear cache and reboot app.
