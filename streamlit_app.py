@@ -10,6 +10,9 @@ import streamlit as st
 
 os.environ.setdefault("STREAMLIT_SERVER_FILE_WATCHER_TYPE", "none")
 
+IS_STREAMLIT_CLOUD = Path("/mount/src").exists() or os.getenv("STREAMLIT_SHARING_MODE") == "1"
+ENABLE_XTTS_IN_CLOUD = os.getenv("ENABLE_XTTS_IN_CLOUD", "0") == "1"
+
 try:
     import soundfile as sf
 except ModuleNotFoundError:
@@ -151,6 +154,12 @@ def main() -> None:
     st.caption("Upload a short WAV file, choose a target accent, and convert.")
     st.caption("Exact-wording mode is enabled. Style text injection is disabled.")
     st.caption("Mode: local Streamlit inference")
+
+    if IS_STREAMLIT_CLOUD and not ENABLE_XTTS_IN_CLOUD:
+        st.warning(
+            "Cloud safe mode is active. Using lightweight fallback TTS (accent/gender fidelity will be limited). "
+            "Set ENABLE_XTTS_IN_CLOUD=1 in Streamlit app settings to enable full XTTS."
+        )
 
     _save_reference_uploads()
 
