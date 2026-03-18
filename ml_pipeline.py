@@ -1,21 +1,22 @@
 """ML pipeline: transcription and accent conversion."""
 
+import gc
 import os
 import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 import soundfile as sf
 import torch
 import torchaudio
 from faster_whisper import WhisperModel
-from TTS.api import TTS
 
-WHISPER_MODEL_SIZE = "base"
-XTTS_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")
+XTTS_MODEL_NAME = os.getenv("XTTS_MODEL_NAME", "tts_models/multilingual/multi-dataset/xtts_v2")
+CACHE_XTTS_MODEL = os.getenv("CACHE_XTTS_MODEL", "0") == "1"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = PROJECT_ROOT / "data" / "outputs"
@@ -27,7 +28,7 @@ os.environ.setdefault("COQUI_TOS_AGREED", "1")
 # XTTS checkpoints require full torch.load for trusted local model files.
 os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
 
-CPU_THREADS = max(1, min((os.cpu_count() or 4), 4))
+CPU_THREADS = max(1, min((os.cpu_count() or 2), 2))
 torch.set_num_threads(CPU_THREADS)
 torch.set_num_interop_threads(1)
 
@@ -61,10 +62,23 @@ def _get_whisper_model() -> WhisperModel:
 	return WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
 
 
-@lru_cache(maxsize=1)
-def _get_xtts_model() -> TTS:
+def _load_xtts_model() -> Any:
+	# Import lazily so Streamlit startup does not trigger heavy TTS initialization.
+	from TTS.api import TTS
+
 	_patch_torchaudio_load()
 	return TTS(XTTS_MODEL_NAME).to("cpu")
+
+
+@lru_cache(maxsize=1)
+def _get_xtts_model_cached() -> Any:
+	return _load_xtts_model()
+
+
+def _get_xtts_model() -> Any:
+	if CACHE_XTTS_MODEL:
+		return _get_xtts_model_cached()
+	return _load_xtts_model()
 
 
 def warmup_models() -> None:
@@ -147,13 +161,27 @@ def generate_speech(
 	out_path = Path(output_path) if output_path else OUTPUT_DIR / f"xtts_{key}_{uuid4().hex}.wav"
 	styled_text = _apply_style(text=text, style=style, intensity=intensity)
 
-	tts = _get_xtts_model()
-	tts.tts_to_file(
-		text=styled_text,
-		speaker_wav=str(speaker_wav),
-		language="en",
-		file_path=str(out_path),
-	)
+	try:
+		tts = _get_xtts_model()
+	except Exception as exc:
+		raise RuntimeError(
+			"Failed to load XTTS model on this host. "
+			"Set XTTS_MODEL_NAME to a smaller model or retry later. "
+			f"Original error: {exc}"
+		) from exc
+
+	try:
+		tts.tts_to_file(
+			text=styled_text,
+			speaker_wav=str(speaker_wav),
+			language="en",
+			file_path=str(out_path),
+		)
+	finally:
+		# In low-memory deployments (e.g., Streamlit Cloud), avoid retaining XTTS in memory.
+		if not CACHE_XTTS_MODEL:
+			del tts
+			gc.collect()
 
 	return str(out_path)
 
